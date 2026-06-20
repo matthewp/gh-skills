@@ -1,0 +1,76 @@
+# gh-skills
+
+Portable **[Agent Skills](https://agentskills.io)** that teach any agent to use the
+GitHub REST API. The expertise lives in documentation, not in a library or a
+bundled SDK — give an agent a skill plus any way to make HTTP requests (a shell
+with `curl`, an HTTP tool, etc.) and it can read and write GitHub data.
+
+Two skills, same API knowledge, differing only in **how the token shows up**:
+
+| Skill | Auth | Use when |
+| --- | --- | --- |
+| **`github-client`** | Acquires its own token: `GITHUB_TOKEN` → cached token → **OAuth device-flow login** | The agent can interact with the user (prompt a browser login). |
+| **`github-api`** | A token is **provided** to it (env or passed in); never logs anyone in | Headless/server contexts, or an orchestrator hands the agent a token. |
+
+```
+gh-skills/
+├─ github-client/                  # full client — does its own auth
+│  ├─ SKILL.md
+│  ├─ references/
+│  │  ├─ authentication.md         # token cache, OAuth device flow + refresh, scopes, errors
+│  │  ├─ endpoints.md
+│  │  └─ search-syntax.md
+│  └─ scripts/
+│     └─ login.sh                  # turnkey device-flow login → writes the token cache
+└─ github-api/                     # calls only — token is supplied
+   ├─ SKILL.md
+   └─ references/
+      ├─ endpoints.md
+      └─ search-syntax.md
+```
+
+Each is a self-contained Agent Skill directory (the shared `references/` are
+copied into both so either can be used independently). An agent loads `SKILL.md`
+first and pulls in `references/` only when a task needs them (progressive
+disclosure).
+
+## Using a skill
+
+**Any Agent Skills-compatible runtime** — drop the skill directory where the
+runtime discovers skills (commonly `<workspace>/.agents/skills/`).
+
+**Flue** — import the one you want into an agent or workflow:
+
+```ts
+import githubClient from '../path/to/gh-skills/github-client/SKILL.md' with { type: 'skill' };
+// or, for headless use with a caller-supplied token:
+import githubApi from '../path/to/gh-skills/github-api/SKILL.md' with { type: 'skill' };
+
+export default createAgent(() => ({
+  model: 'anthropic/claude-sonnet-4-6',
+  skills: [githubClient],
+  // plus an executable capability: a sandbox (curl) or an HTTP request tool
+}));
+```
+
+A skill provides knowledge only — it does not execute anything. Pair it with an
+execution capability (and, for `github-api`, a token).
+
+## Auth & safety
+
+- **`github-client`** acquires and manages its own token: `GITHUB_TOKEN` if set →
+  a **cached token** at `~/.config/gh-skills/token.json` (reused until it expires,
+  refreshed when it can) → otherwise an OAuth **device-flow** login (run
+  `github-client/scripts/login.sh`). It ships its own registered OAuth App, so
+  login works out of the box; `GITHUB_OAUTH_CLIENT_ID` overrides it with your own.
+  No PAT prompting.
+- **`github-api`** never logs anyone in: it uses a token the caller supplies and
+  stops if none is available.
+- Both keep the token scoped to `api.github.com`, and never echo or hard-code it.
+- Do not put real tokens in this directory — it is meant to be shared/committed.
+
+## Related
+
+The knowledge-as-a-skill counterpart to the `gh-agent` prototype (a Flue
+agent/workflow with a typed GitHub tool). Same goal — a reusable GitHub access
+layer — expressed as portable documentation instead of code.
