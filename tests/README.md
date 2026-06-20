@@ -44,13 +44,44 @@ MODEL=claude-haiku-4-5-20251001 PROMPTS_FILE=<(jq '[.[0]]' tests/prompts.json) t
 Prompts **must be read-only against public repos** — runs use
 `--permission-mode bypassPermissions`.
 
+## Warm vs cold skill load
+
+`run.sh` runs each prompt as a **fresh** `claude -p` process, so it pays the
+SKILL.md load every time — the **cold** worst case. In a real session you load
+the skill once and reuse it. [`warmcold.sh`](warmcold.sh) isolates that variable:
+for each prompt it measures the task **cold** (fresh session) and **warm** (a
+primer task loads the skill, then the real task runs via `claude --resume`), and
+reports `premium = cold − warm`.
+
+```bash
+GITHUB_TOKEN=$(gh auth token) tests/warmcold.sh   # -> tests/results-warmcold/
+```
+
+Measured (Sonnet, 5 prompts): cold ≈ **$0.094/task** (4–5 turns), warm ≈
+**$0.028/task** (2–3 turns) — **warm is ~3.4× cheaper**, a cold load adds
+**~$0.067/task**, paid once per session. Cold runs write ~10k `cache_creation`
+tokens (skill + context into cache) and spend an extra ~2 turns; warm runs write
+almost none. So a multi-task session amortizes the load — divide the cold premium
+by the number of GitHub tasks in the session.
+
+**Caveat:** the premium mixes the skill load with generic cold prompt-cache
+warm-up (~7k system-prompt tokens that the `gh` baseline also pays cold). Don't
+compare warm-skill against the (cold) `gh` column — that's apples-to-oranges. A
+fair warm-vs-warm skill/gh number would require measuring `gh` warm too (not yet
+done; see "next steps").
+
 ## Notes
 
-- Token counts are non-deterministic (model variation). Use `RUNS=3+` to average
-  for a stabler comparison; treat small deltas as noise.
+- Token counts are non-deterministic (model variation). `RUNS=3+` averages the
+  **cold** number to cut noise — it does **not** measure warm/cold (every run is
+  a fresh cold start); use `warmcold.sh` for that.
 - `summary.json` is machine-readable for trend tracking across commits.
-- Only `github-client` is benchmarked for now; `github-client-pure` and
-  `github-api` can be added as conditions later.
+
+### Next steps
+- Add a **warm `gh`** condition so skill/gh can be compared warm-vs-warm (fair),
+  not just cold-vs-cold.
+- Add `github-client-pure` and `github-api` as conditions to compare all three
+  skills in one table.
 
 ## CI
 
