@@ -41,8 +41,9 @@ Numbers are illustrative — re-run to refresh; treat small deltas as noise.
 | **Total** | **$0.4723 / $0.3024** | **2,528 / 1,192** | **416,444 / 240,894** | |
 
 **skill ÷ gh — cost 1.56× · output 2.12× · input 1.73×** (cold-vs-cold). `gh` is a
-flat 2 turns; the skill takes 4–5 (invoke skill → `curl` → answer). Most of the
-gap is the one-time skill load — see warm vs cold below.
+flat 2 turns; the skill takes 4–5 (invoke skill → `curl` → answer). Part of this
+gap is the one-time skill load, which amortizes in a warm session — but a smaller
+gap persists even warm. See warm vs cold below.
 
 ## Running locally
 
@@ -62,41 +63,40 @@ MODEL=claude-haiku-4-5-20251001 PROMPTS_FILE=<(jq '[.[0]]' tests/prompts.json) t
 Prompts **must be read-only against public repos** — runs use
 `--permission-mode bypassPermissions`.
 
-## Warm vs cold skill load
+## Warm vs cold — skill *and* gh
 
-`run.sh` runs each prompt as a **fresh** `claude -p` process, so it pays the
-SKILL.md load every time — the **cold** worst case. In a real session you load
-the skill once and reuse it. [`warmcold.sh`](warmcold.sh) isolates that variable:
-for each prompt it measures the task **cold** (fresh session) and **warm** (a
-primer task loads the skill, then the real task runs via `claude --resume`), and
-reports `premium = cold − warm`.
+`run.sh` runs each prompt as a **fresh** `claude -p` process, so it pays a cold
+start every time — the worst case. In a real session you reuse a warm context.
+[`warmcold.sh`](warmcold.sh) measures both conditions cold and warm: for each
+prompt × {skill, gh} it runs the task **cold** (fresh session) and **warm** (a
+primer task warms the session — loading the skill for `skill`, warming the prompt
+cache for both — then the real task runs via `claude --resume`).
 
 ```bash
 GITHUB_TOKEN=$(gh auth token) tests/warmcold.sh   # -> tests/results-warmcold/
 ```
 
-Measured (model `claude-sonnet-4-6`, 5 prompts):
+Measured (model `claude-sonnet-4-6`, 5 prompts, cost per task):
 
-| Prompt | Cold $ | Warm $ | Premium $ | Cold/Warm turns |
+| Prompt | Skill cold | Skill warm | gh cold | gh warm |
 |---|---|---|---|---|
-| One issue's title and author | $0.0877 | $0.0232 | $0.0646 | 4 / 2 |
-| 5 most recent commits | $0.0951 | $0.0262 | $0.0690 | 4 / 2 |
-| 5 most recent open issues | $0.1069 | $0.0415 | $0.0655 | 5 / 3 |
-| Repo summary stats | $0.0895 | $0.0234 | $0.0661 | 4 / 2 |
-| Search open bug issues | $0.0914 | $0.0234 | $0.0680 | 4 / 2 |
-| **Total** | **$0.4707** | **$0.1377** | **$0.3331** | |
+| One issue's title and author | $0.0881 | $0.0219 | $0.0597 | $0.0194 |
+| 5 most recent commits | $0.0925 | $0.0260 | $0.0626 | $0.0218 |
+| 5 most recent open issues | $0.1086 | $0.0415 | $0.0611 | $0.0211 |
+| Repo summary stats | $0.0886 | $0.0235 | $0.0588 | $0.0187 |
+| Search open bug issues | $0.0920 | $0.0235 | $0.0611 | $0.0197 |
+| **Total** | **$0.4699** | **$0.1364** | **$0.3033** | **$0.1007** |
 
-Cold ≈ **$0.094/task** (4–5 turns), warm ≈ **$0.028/task** (2–3 turns) — **warm is
-~3.4× cheaper**, a cold load adds **~$0.067/task**, paid once per session. Cold
-runs write ~10k `cache_creation` tokens (skill + context into cache) and spend an
-extra ~2 turns; warm runs write almost none. So a multi-task session amortizes
-the load — divide the cold premium by the number of GitHub tasks in the session.
+**skill ÷ gh — cold 1.55× · warm 1.35×.** Both warm by ~3× (skill 3.45×, gh
+3.01×), so warming is the bigger lever for *either* approach than the choice
+between them.
 
-**Caveat:** the premium mixes the skill load with generic cold prompt-cache
-warm-up (~7k system-prompt tokens that the `gh` baseline also pays cold). Don't
-compare warm-skill against the (cold) `gh` column — that's apples-to-oranges. A
-fair warm-vs-warm skill/gh number would require measuring `gh` warm too (not yet
-done; see "next steps").
+The skill/gh gap **narrows** warm but doesn't close. Decomposing the per-task
+difference: cold skill−gh ≈ **$0.033/task**, warm skill−gh ≈ **$0.007/task**. So
+~$0.026 is the **cold skill load** (amortizes once per session) and ~$0.007 is a
+**persistent** cost that survives warming — the REST/JSON path being more verbose
+and a turn or two longer than `gh`'s compact output. Earlier framing ("skill load
+is most of the cost") was wrong: `gh` pays a nearly identical cold-cache premium.
 
 ## Notes
 
@@ -106,8 +106,6 @@ done; see "next steps").
 - `summary.json` is machine-readable for trend tracking across commits.
 
 ### Next steps
-- Add a **warm `gh`** condition so skill/gh can be compared warm-vs-warm (fair),
-  not just cold-vs-cold.
 - Add `github-client-pure` and `github-api` as conditions to compare all three
   skills in one table.
 
