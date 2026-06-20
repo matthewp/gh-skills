@@ -7,17 +7,19 @@ baseline as the skill changes.
 ## What it does
 
 For each prompt in [`prompts.json`](prompts.json), [`run.sh`](run.sh) runs a
-headless `claude -p` agent under two conditions and records its reported token
-usage:
+headless `claude -p` agent under each condition in `$CONDITIONS` (default
+`skill gh`) and records its reported token usage:
 
 | Condition | Setup | Method the agent must use |
 | --- | --- | --- |
 | `skill` | `github-client` skill mounted in a temp project's `.claude/skills/`; `gh` shadowed by a PATH shim that fails; `GITHUB_TOKEN` provided | the GitHub REST API via `curl`, guided by the skill |
+| `pure` | `github-client-pure` skill mounted; `gh` shimmed; `GITHUB_TOKEN` provided | GraphQL via `curl`, guided by the skill |
 | `gh` | no skill; `gh` installed + authenticated | the `gh` CLI |
 
-Both conditions get the **same prompt and model**. The difference in token usage
-is the cost of the approach: skill-loading + REST/JSON verbosity vs `gh`'s
-compact, field-selected output.
+Every condition gets the **same prompt and model**. The difference in token usage
+is the cost of the approach: skill-loading + REST/GraphQL verbosity vs `gh`'s
+compact, field-selected output. Ratios are reported against `$BASELINE`
+(default `gh`).
 
 Output (in `results/`, git-ignored):
 - `runs/<id>__<cond>__<n>.json` — the full `claude` result for each run
@@ -28,22 +30,31 @@ The script **exits non-zero if any run errored**, so CI catches a broken skill.
 
 ## Sample results
 
-A snapshot (model `claude-sonnet-4-6`, 1 run/cell, 5 prompts vs `cli/cli`).
+A snapshot (model `claude-sonnet-4-6`, 1 run/cell, 5 prompts vs `cli/cli`, cold).
 Numbers are illustrative — re-run to refresh; treat small deltas as noise.
 
-| Prompt | Cost (skill / gh) | Output tok (skill / gh) | Input tok (skill / gh) | Turns (s/g) |
-|---|---|---|---|---|
-| One issue's title and author | $0.0878 / $0.0591 | 278 / 173 | 77,523 / 48,120 | 4 / 2 |
-| 5 most recent commits | $0.0949 / $0.0629 | 608 / 351 | 77,894 / 48,301 | 4 / 2 |
-| 5 most recent open issues | $0.1075 / $0.0611 | 764 / 271 | 105,732 / 48,201 | 5 / 2 |
-| Repo summary stats | $0.0897 / $0.0588 | 378 / 158 | 77,578 / 48,104 | 4 / 2 |
-| Search open bug issues | $0.0923 / $0.0604 | 500 / 239 | 77,717 / 48,168 | 4 / 2 |
-| **Total** | **$0.4723 / $0.3024** | **2,528 / 1,192** | **416,444 / 240,894** | |
+| Condition | Total cost | Output tok | Input tok | Turns | ×gh cost |
+|---|---|---|---|---|---|
+| `skill` (REST + `curl`) | $0.4691 | 2,432 | 416,160 | 21 | 1.55× |
+| `pure` (GraphQL) | $0.5030 | 2,947 | 520,468 | 25 | 1.66× |
+| `gh` | $0.3030 | 1,229 | 240,889 | 10 | 1.00× |
 
-**skill ÷ gh — cost 1.56× · output 2.12× · input 1.73×** (cold-vs-cold). `gh` is a
-flat 2 turns; the skill takes 4–5 (invoke skill → `curl` → answer). Part of this
-gap is the one-time skill load, which amortizes in a warm session — but a smaller
-gap persists even warm. See warm vs cold below.
+`gh` is a flat 2 turns/prompt; `skill` takes 4–5 (invoke skill → `curl` →
+answer); `pure` takes 5 and writes the **most** output tokens, because composing
+a GraphQL query is more verbose than a REST URL or a `gh` command.
+
+**The GraphQL `pure` skill is *not* the cheapest** — its server-side field
+selection saves on the **response**, but in a shell-capable agent that's a small
+part of the cost next to skill-load + per-task query construction. Its one win
+was the **"5 recent open issues"** prompt, where the REST skill over-fetched the
+full ~30-field JSON and `pure` returned only the asked-for fields (pure $0.1013 <
+skill $0.1080). So GraphQL helps exactly where REST over-fetches, but costs more
+elsewhere.
+
+**Takeaway:** `github-client-pure`'s value is **portability** (works with no
+shell / `jq`), not raw token cost when `curl` is available — which is what it was
+designed for. The default `skill` vs `gh` comparison stays at **~1.55× cold**;
+see warm vs cold below for how the one-time skill load amortizes.
 
 ## Running locally
 
