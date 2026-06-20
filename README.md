@@ -1,20 +1,22 @@
 # gh-skills
 
 Portable **[Agent Skills](https://agentskills.io)** that teach any agent to use the
-GitHub REST API. The expertise lives in documentation, not in a library or a
+GitHub API. The expertise lives in documentation, not in a library or a
 bundled SDK — give an agent a skill plus any way to make HTTP requests (a shell
 with `curl`, an HTTP tool, etc.) and it can read and write GitHub data.
 
-Two skills, same API knowledge, differing only in **how the token shows up**:
+Three skills, same GitHub knowledge, differing in **how the token shows up** and
+**which capability the agent has**:
 
 | Skill | Auth | Use when |
 | --- | --- | --- |
-| **`github-client`** | Acquires its own token: `GITHUB_TOKEN` → cached token → **OAuth device-flow login** | The agent can interact with the user (prompt a browser login). |
+| **`github-client`** | Acquires its own token: `GITHUB_TOKEN` → cached token → **OAuth device-flow login** | The agent can interact with the user (prompt a browser login) and has a shell + `jq`. |
 | **`github-api`** | A token is **provided** to it (env or passed in); never logs anyone in | Headless/server contexts, or an orchestrator hands the agent a token. |
+| **`github-client-pure`** | Same as `github-client` (device flow), done over plain HTTP | The agent can **only** make HTTP requests — no shell, no `jq`, no code runtime. Uses GraphQL so the server trims responses. |
 
 ```
 gh-skills/
-├─ github-client/                  # full client — does its own auth
+├─ github-client/                  # full client — does its own auth (shell + jq)
 │  ├─ SKILL.md
 │  ├─ references/
 │  │  ├─ authentication.md         # token cache, OAuth device flow + refresh, scopes, errors
@@ -23,6 +25,12 @@ gh-skills/
 │  └─ scripts/
 │     ├─ login.sh                  # turnkey device-flow login → writes the token cache
 │     └─ api.sh                    # authed request helper: resolves token, sends headers, trims via -q jq filter
+├─ github-client-pure/             # pure HTTP — no shell/jq; GraphQL reads, REST writes
+│  ├─ SKILL.md
+│  └─ references/
+│     ├─ authentication.md         # device flow over HTTP; shared token cache
+│     ├─ graphql.md                # GraphQL query catalog + field vocabulary
+│     └─ search-syntax.md
 └─ github-api/                     # calls only — token is supplied
    ├─ SKILL.md
    └─ references/
