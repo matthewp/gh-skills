@@ -26,6 +26,24 @@ Output (in `results/`, git-ignored):
 
 The script **exits non-zero if any run errored**, so CI catches a broken skill.
 
+## Sample results
+
+A snapshot (model `claude-sonnet-4-6`, 1 run/cell, 5 prompts vs `cli/cli`).
+Numbers are illustrative — re-run to refresh; treat small deltas as noise.
+
+| Prompt | Cost (skill / gh) | Output tok (skill / gh) | Input tok (skill / gh) | Turns (s/g) |
+|---|---|---|---|---|
+| One issue's title and author | $0.0878 / $0.0591 | 278 / 173 | 77,523 / 48,120 | 4 / 2 |
+| 5 most recent commits | $0.0949 / $0.0629 | 608 / 351 | 77,894 / 48,301 | 4 / 2 |
+| 5 most recent open issues | $0.1075 / $0.0611 | 764 / 271 | 105,732 / 48,201 | 5 / 2 |
+| Repo summary stats | $0.0897 / $0.0588 | 378 / 158 | 77,578 / 48,104 | 4 / 2 |
+| Search open bug issues | $0.0923 / $0.0604 | 500 / 239 | 77,717 / 48,168 | 4 / 2 |
+| **Total** | **$0.4723 / $0.3024** | **2,528 / 1,192** | **416,444 / 240,894** | |
+
+**skill ÷ gh — cost 1.56× · output 2.12× · input 1.73×** (cold-vs-cold). `gh` is a
+flat 2 turns; the skill takes 4–5 (invoke skill → `curl` → answer). Most of the
+gap is the one-time skill load — see warm vs cold below.
+
 ## Running locally
 
 ```bash
@@ -57,12 +75,22 @@ reports `premium = cold − warm`.
 GITHUB_TOKEN=$(gh auth token) tests/warmcold.sh   # -> tests/results-warmcold/
 ```
 
-Measured (Sonnet, 5 prompts): cold ≈ **$0.094/task** (4–5 turns), warm ≈
-**$0.028/task** (2–3 turns) — **warm is ~3.4× cheaper**, a cold load adds
-**~$0.067/task**, paid once per session. Cold runs write ~10k `cache_creation`
-tokens (skill + context into cache) and spend an extra ~2 turns; warm runs write
-almost none. So a multi-task session amortizes the load — divide the cold premium
-by the number of GitHub tasks in the session.
+Measured (model `claude-sonnet-4-6`, 5 prompts):
+
+| Prompt | Cold $ | Warm $ | Premium $ | Cold/Warm turns |
+|---|---|---|---|---|
+| One issue's title and author | $0.0877 | $0.0232 | $0.0646 | 4 / 2 |
+| 5 most recent commits | $0.0951 | $0.0262 | $0.0690 | 4 / 2 |
+| 5 most recent open issues | $0.1069 | $0.0415 | $0.0655 | 5 / 3 |
+| Repo summary stats | $0.0895 | $0.0234 | $0.0661 | 4 / 2 |
+| Search open bug issues | $0.0914 | $0.0234 | $0.0680 | 4 / 2 |
+| **Total** | **$0.4707** | **$0.1377** | **$0.3331** | |
+
+Cold ≈ **$0.094/task** (4–5 turns), warm ≈ **$0.028/task** (2–3 turns) — **warm is
+~3.4× cheaper**, a cold load adds **~$0.067/task**, paid once per session. Cold
+runs write ~10k `cache_creation` tokens (skill + context into cache) and spend an
+extra ~2 turns; warm runs write almost none. So a multi-task session amortizes
+the load — divide the cold premium by the number of GitHub tasks in the session.
 
 **Caveat:** the premium mixes the skill load with generic cold prompt-cache
 warm-up (~7k system-prompt tokens that the `gh` baseline also pays cold). Don't
