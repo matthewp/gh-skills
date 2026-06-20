@@ -78,6 +78,26 @@ execution capability (and, for `github-api`, a token).
 - Both keep the token scoped to `api.github.com`, and never echo or hard-code it.
 - Do not put real tokens in this directory — it is meant to be shared/committed.
 
+## Token efficiency
+
+[`tests/`](tests/) holds a CI-able benchmark that runs a headless agent over
+read-only prompts and measures token usage per approach. A snapshot (Sonnet,
+5 prompts vs `cli/cli`, cold, 1 run/cell):
+
+| Approach | Total cost | Turns | ×gh |
+| --- | --- | --- | --- |
+| `gh` CLI (baseline) | $0.3030 | 10 | 1.00× |
+| `github-client` (REST + `curl`) | $0.4691 | 21 | 1.55× |
+| `github-client-pure` (GraphQL) | $0.5030 | 25 | 1.66× |
+
+`gh` is the cheapest (compact, field-selected output); the skills cost more
+mostly from the one-time skill load (it **amortizes** across a multi-task
+session — warm, `github-client` is ~1.35× `gh`). `github-client-pure`'s GraphQL
+trims responses server-side but spends more composing queries, so its value is
+**portability** (no shell/`jq`), not raw token cost. See
+[`tests/README.md`](tests/README.md) for the full tables, warm-vs-cold, and how
+to run it.
+
 ## Related
 
 The knowledge-as-a-skill counterpart to the `gh-agent` prototype (a Flue
