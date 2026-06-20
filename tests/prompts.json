@@ -1,0 +1,27 @@
+[
+  {
+    "id": "recent-issues",
+    "title": "5 most recent open issues",
+    "prompt": "List the 5 most recently created open issues in the cli/cli GitHub repository. For each, give only the number and title. Answer concisely."
+  },
+  {
+    "id": "issue-detail",
+    "title": "One issue's title and author",
+    "prompt": "In the cli/cli GitHub repository, what is the title of issue #13687 and who opened it (their login)? Answer in one line."
+  },
+  {
+    "id": "recent-commits",
+    "title": "5 most recent commits on default branch",
+    "prompt": "Show the 5 most recent commits on the default branch of the cli/cli GitHub repository. For each, give the short SHA (7 chars) and the first line of the commit message."
+  },
+  {
+    "id": "search-bug-issues",
+    "title": "Search open bug issues",
+    "prompt": "Find 3 open issues labeled \"bug\" in the cli/cli GitHub repository and list their numbers and titles. Answer concisely."
+  },
+  {
+    "id": "repo-summary",
+    "title": "Repo summary stats",
+    "prompt": "For the cli/cli GitHub repository, report its description, primary language, star count, and default branch name. One short paragraph."
+  }
+]

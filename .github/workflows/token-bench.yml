@@ -1,0 +1,47 @@
+name: token-bench
+
+# Manual only — this spends Anthropic API tokens, so it never runs automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model id/alias for both conditions
+        default: claude-sonnet-4-6
+      runs:
+        description: Runs per cell (averaged)
+        default: "1"
+
+permissions:
+  contents: read   # built-in GITHUB_TOKEN can read public repos via the API
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run benchmark
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MODEL: ${{ inputs.model }}
+          RUNS: ${{ inputs.runs }}
+        run: tests/run.sh
+
+      - name: Publish summary
+        if: always()
+        run: cat tests/results/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: token-bench-results
+          path: tests/results/

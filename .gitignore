@@ -3,3 +3,6 @@
 token.json
 *.token
 .DS_Store
+
+# Token-efficiency benchmark output
+tests/results/
