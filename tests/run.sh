@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
-# Token-efficiency benchmark: the `github-client` skill vs the `gh` CLI.
+# Token-efficiency benchmark: GitHub skills vs the `gh` CLI.
 #
-# For each prompt in prompts.json, runs a headless `claude -p` agent under two
-# conditions and records token usage, cost, and the answer:
+# For each prompt in prompts.json, runs a headless `claude -p` agent under each
+# condition in $CONDITIONS and records token usage, cost, and the answer:
 #
-#   skill  — the github-client skill is available (in a temp project's
-#            .claude/skills/), gh is blocked via a PATH shim so the agent must
-#            use the REST API (curl); GITHUB_TOKEN is provided.
+#   skill  — the github-client skill (REST + curl) is mounted in a temp project's
+#            .claude/skills/; gh is blocked via a PATH shim; GITHUB_TOKEN set.
+#   pure   — the github-client-pure skill (GraphQL, no shell/jq) is mounted; gh
+#            blocked; GITHUB_TOKEN set.
 #   gh     — no skill; the gh CLI is available and authenticated.
 #
-# Then it writes tests/results/{records.jsonl,summary.json,summary.md} and
-# prints a comparison. Exit non-zero if any run errored (good for CI).
+# Then it writes tests/results/{records.jsonl,summary.json,summary.md} and prints
+# a comparison (ratios vs $BASELINE). Exit non-zero if any run errored.
 #
 # Prompts MUST be read-only against public repos — runs use bypassPermissions.
 #
 # Config (env):
-#   MODEL        model alias/id for both conditions (default claude-sonnet-4-6)
+#   CONDITIONS   space-separated subset of "skill pure gh" (default "skill gh")
+#   BASELINE     condition to compute ratios against (default gh)
+#   MODEL        model alias/id (default claude-sonnet-4-6)
 #   RUNS         runs per cell, averaged (default 1)
 #   TIMEOUT      per-run timeout seconds (default 240)
-#   GITHUB_TOKEN token for both conditions (falls back to `gh auth token`)
+#   GITHUB_TOKEN token for all conditions (falls back to `gh auth token`)
 #   OUT_DIR      output dir (default tests/results)
 #   PROMPTS_FILE prompts JSON (default tests/prompts.json)
 #
@@ -34,6 +37,16 @@ MODEL="${MODEL:-claude-sonnet-4-6}"
 RUNS="${RUNS:-1}"
 TIMEOUT="${TIMEOUT:-240}"
 PROMPTS="${PROMPTS_FILE:-$TESTS/prompts.json}"
+CONDITIONS="${CONDITIONS:-skill gh}"
+BASELINE="${BASELINE:-gh}"
+
+# Per-condition skill dir ("" = no skill) and system steer.
+cond_skill_dir(){ case "$1" in skill) echo github-client;; pure) echo github-client-pure;; *) echo "";; esac; }
+cond_sys(){ case "$1" in
+  skill) echo "You can make HTTP requests with curl and you have a Skill named 'github-client' (a GitHub REST API client). Use that skill and the REST API to answer. The gh CLI is NOT available.";;
+  pure)  echo "You can make HTTP requests with curl and you have a Skill named 'github-client-pure' (a pure-HTTP GitHub client that reads via GraphQL). Use that skill to answer. The gh CLI is NOT available.";;
+  gh)    echo "Use the gh CLI (the 'gh' command) to answer GitHub questions. It is installed and authenticated.";;
+esac; }
 
 need(){ command -v "$1" >/dev/null 2>&1 || { echo "error: '$1' is required" >&2; exit 1; }; }
 need claude; need jq; need curl
@@ -47,16 +60,15 @@ RECORDS="$OUT/records.jsonl"; : > "$RECORDS"
 
 run_one(){ # id prompt condition runidx
   local id="$1" prompt="$2" cond="$3" idx="$4"
-  local work sys; work="$(mktemp -d)"; local pre=()
-  if [ "$cond" = "skill" ]; then
+  local work sys skilldir; work="$(mktemp -d)"; local pre=()
+  sys="$(cond_sys "$cond")"; skilldir="$(cond_skill_dir "$cond")"
+  if [ -n "$skilldir" ]; then
     mkdir -p "$work/.claude/skills" "$work/bin"
-    ln -s "$ROOT/github-client" "$work/.claude/skills/github-client"
-    printf '#!/usr/bin/env bash\necho "gh unavailable here — use the GitHub REST API (curl) per the github-client skill" >&2\nexit 127\n' > "$work/bin/gh"
+    ln -s "$ROOT/$skilldir" "$work/.claude/skills/$skilldir"
+    printf '#!/usr/bin/env bash\necho "gh unavailable here — use the GitHub API (curl) per the %s skill" >&2\nexit 127\n' "$skilldir" > "$work/bin/gh"
     chmod +x "$work/bin/gh"
-    sys="You can make HTTP requests with curl and you have a Skill named 'github-client' (a GitHub REST API client). Use that skill and the REST API to answer. The gh CLI is NOT available."
     pre=(env "PATH=$work/bin:$PATH" "GITHUB_TOKEN=$TOKEN")
   else
-    sys="Use the gh CLI (the 'gh' command) to answer GitHub questions. It is installed and authenticated."
     pre=(env "GH_TOKEN=$TOKEN" "GITHUB_TOKEN=$TOKEN")
   fi
 
@@ -89,11 +101,11 @@ run_one(){ # id prompt condition runidx
 
 fail=0
 n=$(jq length "$PROMPTS")
-echo "Benchmarking $n prompts × {skill, gh} × $RUNS run(s) on $MODEL" >&2
+echo "Benchmarking $n prompts × {$CONDITIONS} × $RUNS run(s) on $MODEL" >&2
 for ((i=0;i<n;i++)); do
   id=$(jq -r ".[$i].id" "$PROMPTS")
   prompt=$(jq -r ".[$i].prompt" "$PROMPTS")
-  for cond in skill gh; do
+  for cond in $CONDITIONS; do
     for ((r=1;r<=RUNS;r++)); do
       echo ">> $id [$cond] $r/$RUNS" >&2
       run_one "$id" "$prompt" "$cond" "$r" || fail=1
@@ -101,51 +113,45 @@ for ((i=0;i<n;i++)); do
   done
 done
 
-# Aggregate (mean per id+condition) into summary.json
+# Aggregate (mean per id+condition) into summary.json: {id,title,conds:{<cond>:{...}}}
 jq -s --slurpfile prompts "$PROMPTS" '
   def mean(f): if length==0 then 0 else ((map(f)|add) / length) end;
   (INDEX($prompts[0][]; .id)) as $titles
   | group_by(.id)
   | map(
       .[0].id as $id
-      | (group_by(.condition) | map({ (.[0].condition): {
-            ok: all(.ok),
-            cost_usd: mean(.cost_usd),
-            out_tokens: mean(.out_tokens),
-            total_in: mean(.total_in),
-            num_turns: mean(.num_turns),
-            duration_ms: mean(.duration_ms)
-        }}) | add) as $b
-      | { id:$id, title: ($titles[$id].title // $id), skill: ($b.skill//null), gh: ($b.gh//null) }
+      | { id:$id, title: ($titles[$id].title // $id),
+          conds: (group_by(.condition) | map({ (.[0].condition): {
+              ok: all(.ok), cost_usd: mean(.cost_usd), out_tokens: mean(.out_tokens),
+              total_in: mean(.total_in), num_turns: mean(.num_turns)
+          }}) | add) }
     )
 ' "$RECORDS" > "$OUT/summary.json"
 
-# Render markdown + stdout summary
+# Render markdown + stdout summary (N conditions; ratios vs $BASELINE)
 render(){
-  echo "# Token-efficiency: github-client skill vs gh CLI"
+  local conds_json; conds_json=$(printf '%s\n' $CONDITIONS | jq -R . | jq -sc .)
+  echo "# Token-efficiency: GitHub skills vs gh CLI"
   echo
-  echo "Model \`$MODEL\` · $RUNS run(s)/cell · $(date -u +%FT%TZ)"
+  echo "Model \`$MODEL\` · $RUNS run(s)/cell · conditions: $CONDITIONS · baseline: $BASELINE · $(date -u +%FT%TZ)"
   echo
-  echo "| Prompt | Cost (skill/gh) | Output tok (skill/gh) | Input tok (skill/gh) | Turns (s/g) |"
-  echo "|---|---|---|---|---|"
-  jq -r '.[] | [.title,
-      (.skill.cost_usd//0),(.gh.cost_usd//0),
-      (.skill.out_tokens//0),(.gh.out_tokens//0),
-      (.skill.total_in//0),(.gh.total_in//0),
-      (.skill.num_turns//0),(.gh.num_turns//0)] | @tsv' "$OUT/summary.json" |
-  while IFS=$'\t' read -r t sc gc so go si gi st gt; do
-    printf "| %s | \$%.4f / \$%.4f | %.0f / %.0f | %.0f / %.0f | %.0f / %.0f |\n" "$t" "$sc" "$gc" "$so" "$go" "$si" "$gi" "$st" "$gt"
+  # Per-prompt cost table (one column per condition)
+  printf "| Prompt |"; for c in $CONDITIONS; do printf " %s |" "$c"; done; echo
+  printf "|---|"; for c in $CONDITIONS; do printf '%s' "---|"; done; echo
+  jq -r --argjson cs "$conds_json" '.[] | [.title] + [ $cs[] as $c | (.conds[$c].cost_usd // 0) ] | @tsv' "$OUT/summary.json" |
+  while IFS=$'\t' read -ra f; do
+    row="| ${f[0]} |"; for ((j=1;j<${#f[@]};j++)); do row+="$(printf ' $%.4f |' "${f[j]}")"; done; echo "$row"
   done
-  # totals + ratios
-  read -r SC GC SO GO SI GI < <(jq -r '
-    [ (map(.skill.cost_usd//0)|add), (map(.gh.cost_usd//0)|add),
-      (map(.skill.out_tokens//0)|add), (map(.gh.out_tokens//0)|add),
-      (map(.skill.total_in//0)|add), (map(.gh.total_in//0)|add) ] | @tsv' "$OUT/summary.json")
-  printf "| **Total** | \$%.4f / \$%.4f | %.0f / %.0f | %.0f / %.0f | |\n" "$SC" "$GC" "$SO" "$GO" "$SI" "$GI"
   echo
-  awk -v sc="$SC" -v gc="$GC" -v so="$SO" -v go="$GO" -v si="$SI" -v gi="$GI" 'BEGIN{
-    printf "**skill ÷ gh** — cost %.2f× · output %.2f× · input %.2f×\n", (gc?sc/gc:0),(go?so/go:0),(gi?si/gi:0)
-  }'
+  # Totals + ratio vs baseline, one row per condition
+  echo "| Condition | Total cost | Output tok | Input tok | Turns | ×$BASELINE cost |"
+  echo "|---|---|---|---|---|---|"
+  local base_cost; base_cost=$(jq -r --arg c "$BASELINE" '(map(.conds[$c].cost_usd//0)|add)' "$OUT/summary.json")
+  for c in $CONDITIONS; do
+    read -r CC OO II TT < <(jq -r --arg c "$c" '"\(map(.conds[$c].cost_usd//0)|add)\t\(map(.conds[$c].out_tokens//0)|add)\t\(map(.conds[$c].total_in//0)|add)\t\(map(.conds[$c].num_turns//0)|add)"' "$OUT/summary.json")
+    printf "| %s | \$%.4f | %.0f | %.0f | %.0f | %s |\n" "$c" "$CC" "$OO" "$II" "$TT" \
+      "$(awk -v a="$CC" -v b="$base_cost" 'BEGIN{printf (b? "%.2f×":"—"), a/b}')"
+  done
 }
 render | tee "$OUT/summary.md"
 
