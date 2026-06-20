@@ -2,7 +2,23 @@
 
 All paths are relative to `https://api.github.com`. Send the standard headers:
 `Authorization: Bearer $GITHUB_TOKEN`, `Accept: application/vnd.github+json`,
-`X-GitHub-Api-Version: 2022-11-28`.
+`X-GitHub-Api-Version: 2022-11-28`. In a shell, `scripts/api.sh <path> -q <filter>`
+sends these and trims the response for you.
+
+## Useful fields (select these, ignore the rest)
+
+Responses carry ~30 fields per object; these are the ones worth keeping. Pass
+them to `jq`/`-q` (e.g. `-q '[.[]|{number,title,state}]'`) so you read only them.
+
+| Resource | Commonly useful fields |
+| --- | --- |
+| Issue / PR | `number`, `title`, `state`, `body`, `.user.login`, `.labels[].name`, `comments`, `created_at`, `updated_at`, `html_url`; PRs also `draft`, `merged`, `.base.ref`, `.head.ref` |
+| Repo | `full_name`, `description`, `private`, `default_branch`, `stargazers_count`, `open_issues_count`, `language`, `pushed_at`, `html_url` |
+| Commit | `sha`, `.commit.message`, `.commit.author.name`, `.commit.author.date`, `.author.login` |
+| Workflow run | `id`, `name`, `status`, `conclusion`, `event`, `.head_branch`, `created_at`, `html_url` |
+| Contents (file) | `name`, `path`, `sha`, `size`, `content` (base64) — or fetch with `--raw` for bytes |
+| Search result | top level `total_count`; then trim each `.items[]` like its underlying resource |
+| User | `login`, `name`, `type`, `html_url` |
 
 ## Issues
 

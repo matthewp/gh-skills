@@ -18,10 +18,11 @@ gh-skills/
 │  ├─ SKILL.md
 │  ├─ references/
 │  │  ├─ authentication.md         # token cache, OAuth device flow + refresh, scopes, errors
-│  │  ├─ endpoints.md
+│  │  ├─ endpoints.md               # endpoint catalog + the useful fields to select
 │  │  └─ search-syntax.md
 │  └─ scripts/
-│     └─ login.sh                  # turnkey device-flow login → writes the token cache
+│     ├─ login.sh                  # turnkey device-flow login → writes the token cache
+│     └─ api.sh                    # authed request helper: resolves token, sends headers, trims via -q jq filter
 └─ github-api/                     # calls only — token is supplied
    ├─ SKILL.md
    └─ references/
